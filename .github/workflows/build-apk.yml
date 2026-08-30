@@ -1,0 +1,690 @@
+name: Gerar APK R51ME
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar Android SDK 35
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Criar aplicativo
+        run: |
+          mkdir -p app/src/main/java/com/r51me/remote
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "R51ME Remote"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.r51me.remote'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId "com.r51me.remote"
+                  minSdk 21
+                  targetSdk 35
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.TRANSMIT_IR" />
+
+              <uses-feature
+                  android:name="android.hardware.consumerir"
+                  android:required="false" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="R51M/E Remote"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:screenOrientation="portrait"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/r51me/remote/MainActivity.java <<'EOF'
+          package com.r51me.remote;
+
+          import android.app.Activity;
+          import android.graphics.Color;
+          import android.hardware.ConsumerIrManager;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends Activity {
+
+              private static final int OFF = 0xB27BE0;
+              private static final int SWING = 0xB26BE0;
+
+              // AIR DIRECTION
+              private static final int AIR_DIRECTION = 0xB20FE0;
+
+              private static final int SLEEP = 0xB2E003;
+              private static final int TURBO = 0xB5F5A2;
+
+              // LED DISPLAY
+              private static final int LED_DISPLAY = 0xB5F5A5;
+
+              private ConsumerIrManager ir;
+
+              private int temperatura = 21;
+              private int modo = 0;
+              private int fan = 2;
+
+              private boolean ligado = false;
+
+              private TextView tela;
+              private TextView status;
+              private Button power;
+
+              private final int[] tempMap = {
+                      0x0, 0x1, 0x3, 0x2,
+                      0x6, 0x7, 0x5, 0x4,
+                      0xC, 0xD, 0x9, 0x8,
+                      0xA, 0xB
+              };
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  ir = (ConsumerIrManager)
+                          getSystemService(CONSUMER_IR_SERVICE);
+
+                  montarTela();
+                  atualizar();
+
+                  if (ir != null && ir.hasIrEmitter()) {
+                      status.setText("IR pronto • COOLIX 38 kHz");
+                      status.setTextColor(Color.rgb(20, 120, 40));
+                  } else {
+                      status.setText("Este celular não possui emissor IR");
+                      status.setTextColor(Color.RED);
+                  }
+              }
+
+              private void montarTela() {
+
+                  ScrollView scroll = new ScrollView(this);
+
+                  LinearLayout principal =
+                          new LinearLayout(this);
+
+                  principal.setOrientation(
+                          LinearLayout.VERTICAL);
+
+                  principal.setPadding(
+                          dp(18),
+                          dp(25),
+                          dp(18),
+                          dp(30));
+
+                  principal.setBackgroundColor(
+                          Color.rgb(244, 240, 220));
+
+                  scroll.addView(principal);
+
+                  TextView titulo = texto(
+                          "R51M/E",
+                          30);
+
+                  titulo.setGravity(Gravity.CENTER);
+
+                  principal.addView(titulo);
+
+                  status = texto("", 14);
+                  status.setGravity(Gravity.CENTER);
+
+                  principal.addView(status);
+
+                  tela = texto("21°C", 52);
+
+                  tela.setGravity(Gravity.CENTER);
+                  tela.setBackgroundColor(
+                          Color.rgb(205, 210, 180));
+
+                  tela.setPadding(
+                          dp(10),
+                          dp(20),
+                          dp(10),
+                          dp(20));
+
+                  principal.addView(tela);
+
+                  Button menos = botao("TEMP −");
+                  Button mais = botao("TEMP +");
+
+                  linha(principal, menos, mais);
+
+                  menos.setOnClickListener(v -> {
+                      temperatura--;
+
+                      if (temperatura < 17)
+                          temperatura = 17;
+
+                      ligado = true;
+
+                      enviarEstado();
+                  });
+
+                  mais.setOnClickListener(v -> {
+                      temperatura++;
+
+                      if (temperatura > 30)
+                          temperatura = 30;
+
+                      ligado = true;
+
+                      enviarEstado();
+                  });
+
+                  Button mode = botao("MODE");
+
+                  power = botao("LIGAR");
+
+                  Button fanButton =
+                          botao("FAN SPEED");
+
+                  linha(
+                          principal,
+                          mode,
+                          power,
+                          fanButton);
+
+                  power.setOnClickListener(v -> {
+
+                      if (ligado) {
+
+                          enviar(
+                                  OFF,
+                                  true,
+                                  "Ar desligado");
+
+                          ligado = false;
+
+                      } else {
+
+                          ligado = true;
+
+                          enviarEstado();
+                      }
+
+                      atualizar();
+                  });
+
+                  mode.setOnClickListener(v -> {
+
+                      if (modo == 0)
+                          modo = 1;
+
+                      else if (modo == 1)
+                          modo = 3;
+
+                      else if (modo == 3)
+                          modo = 2;
+
+                      else
+                          modo = 0;
+
+                      ligado = true;
+
+                      enviarEstado();
+                  });
+
+                  fanButton.setOnClickListener(v -> {
+
+                      if (fan == 1)
+                          fan = 2;
+
+                      else if (fan == 2)
+                          fan = 4;
+
+                      else
+                          fan = 1;
+
+                      ligado = true;
+
+                      enviarEstado();
+                  });
+
+                  Button swing =
+                          botao("SWING");
+
+                  Button sleep =
+                          botao("SLEEP");
+
+                  Button turbo =
+                          botao("TURBO");
+
+                  linha(
+                          principal,
+                          swing,
+                          sleep,
+                          turbo);
+
+                  swing.setOnClickListener(v ->
+                          enviar(
+                                  SWING,
+                                  true,
+                                  "Swing"));
+
+                  sleep.setOnClickListener(v ->
+                          enviar(
+                                  SLEEP,
+                                  true,
+                                  "Sleep"));
+
+                  turbo.setOnClickListener(v ->
+                          enviar(
+                                  TURBO,
+                                  true,
+                                  "Turbo"));
+
+                  TextView especial =
+                          texto(
+                                  "FUNÇÕES ESPECIAIS",
+                                  16);
+
+                  especial.setGravity(
+                          Gravity.CENTER);
+
+                  principal.addView(especial);
+
+                  Button air =
+                          botao(
+                                  "AIR\nDIRECTION");
+
+                  Button led =
+                          botao(
+                                  "LED\nDISPLAY");
+
+                  air.setMinHeight(dp(90));
+                  led.setMinHeight(dp(90));
+
+                  linha(
+                          principal,
+                          air,
+                          led);
+
+                  air.setOnClickListener(v ->
+                          enviar(
+                                  AIR_DIRECTION,
+                                  false,
+                                  "Air Direction"));
+
+                  led.setOnClickListener(v ->
+                          enviar(
+                                  LED_DISPLAY,
+                                  true,
+                                  "LED Display"));
+
+                  TextView aviso =
+                          texto(
+                                  "Air Direction move a aleta em passos.\n" +
+                                  "LED Display liga/desliga o visor do ar.",
+                                  14);
+
+                  aviso.setGravity(
+                          Gravity.CENTER);
+
+                  principal.addView(aviso);
+
+                  setContentView(scroll);
+              }
+
+              private void enviarEstado() {
+
+                  int codigo =
+                          tempMap[temperatura - 17];
+
+                  int raw = 0xB20000;
+
+                  raw |= (fan & 0x7) << 13;
+                  raw |= 0x1F << 8;
+                  raw |= (codigo & 0xF) << 4;
+                  raw |= (modo & 0x3) << 2;
+
+                  enviar(
+                          raw,
+                          true,
+                          temperatura + "°C");
+
+                  atualizar();
+              }
+
+              private void enviar(
+                      int codigo,
+                      boolean repetir,
+                      String mensagem) {
+
+                  if (ir == null ||
+                          !ir.hasIrEmitter()) {
+
+                      Toast.makeText(
+                              this,
+                              "Celular sem infravermelho",
+                              Toast.LENGTH_SHORT
+                      ).show();
+
+                      return;
+                  }
+
+                  int[] sinal =
+                          codificar(
+                                  codigo,
+                                  repetir);
+
+                  ir.transmit(
+                          38000,
+                          sinal);
+
+                  Toast.makeText(
+                          this,
+                          mensagem + " enviado",
+                          Toast.LENGTH_SHORT
+                  ).show();
+              }
+
+              private int[] codificar(
+                      int codigo,
+                      boolean repetir) {
+
+                  List<Integer> lista =
+                          new ArrayList<>();
+
+                  frame(lista, codigo);
+
+                  if (repetir)
+                      frame(lista, codigo);
+
+                  int[] resultado =
+                          new int[lista.size()];
+
+                  for (int i = 0;
+                       i < lista.size();
+                       i++) {
+
+                      resultado[i] =
+                              lista.get(i);
+                  }
+
+                  return resultado;
+              }
+
+              private void frame(
+                      List<Integer> lista,
+                      int codigo) {
+
+                  lista.add(4692);
+                  lista.add(4416);
+
+                  for (int shift = 16;
+                       shift >= 0;
+                       shift -= 8) {
+
+                      int b =
+                              (codigo >> shift)
+                                      & 0xFF;
+
+                      byteIR(lista, b);
+
+                      byteIR(
+                              lista,
+                              b ^ 0xFF);
+                  }
+
+                  lista.add(552);
+                  lista.add(5244);
+              }
+
+              private void byteIR(
+                      List<Integer> lista,
+                      int valor) {
+
+                  for (int bit = 7;
+                       bit >= 0;
+                       bit--) {
+
+                      lista.add(552);
+
+                      if (((valor >> bit) & 1)
+                              == 1)
+
+                          lista.add(1656);
+
+                      else
+                          lista.add(552);
+                  }
+              }
+
+              private void atualizar() {
+
+                  String nomeModo;
+
+                  switch (modo) {
+
+                      case 0:
+                          nomeModo = "COOL";
+                          break;
+
+                      case 1:
+                          nomeModo = "DRY";
+                          break;
+
+                      case 3:
+                          nomeModo = "HEAT";
+                          break;
+
+                      default:
+                          nomeModo = "AUTO";
+                  }
+
+                  String nomeFan;
+
+                  if (fan == 1)
+                      nomeFan = "HIGH";
+
+                  else if (fan == 2)
+                      nomeFan = "MED";
+
+                  else
+                      nomeFan = "LOW";
+
+                  tela.setText(
+                          temperatura +
+                          "°C\n" +
+                          nomeModo +
+                          " • " +
+                          nomeFan);
+
+                  power.setText(
+                          ligado
+                                  ? "DESLIGAR"
+                                  : "LIGAR");
+              }
+
+              private Button botao(
+                      String nome) {
+
+                  Button b =
+                          new Button(this);
+
+                  b.setText(nome);
+                  b.setTextSize(13);
+                  b.setAllCaps(false);
+
+                  b.setMinHeight(dp(58));
+
+                  return b;
+              }
+
+              private TextView texto(
+                      String valor,
+                      int tamanho) {
+
+                  TextView t =
+                          new TextView(this);
+
+                  t.setText(valor);
+                  t.setTextSize(tamanho);
+                  t.setTextColor(
+                          Color.rgb(
+                                  50,
+                                  50,
+                                  40));
+
+                  t.setPadding(
+                          dp(5),
+                          dp(10),
+                          dp(5),
+                          dp(10));
+
+                  return t;
+              }
+
+              private void linha(
+                      LinearLayout pai,
+                      Button... botoes) {
+
+                  LinearLayout linha =
+                          new LinearLayout(this);
+
+                  linha.setOrientation(
+                          LinearLayout.HORIZONTAL);
+
+                  linha.setPadding(
+                          0,
+                          dp(6),
+                          0,
+                          dp(6));
+
+                  for (Button b : botoes) {
+
+                      LinearLayout.LayoutParams lp =
+                              new LinearLayout.LayoutParams(
+                                      0,
+                                      LinearLayout.LayoutParams.WRAP_CONTENT,
+                                      1f);
+
+                      lp.setMargins(
+                              dp(3),
+                              0,
+                              dp(3),
+                              0);
+
+                      linha.addView(b, lp);
+                  }
+
+                  pai.addView(linha);
+              }
+
+              private int dp(int valor) {
+
+                  return Math.round(
+                          valor *
+                          getResources()
+                                  .getDisplayMetrics()
+                                  .density);
+              }
+          }
+          EOF
+
+      - name: Compilar APK
+        run: |
+          gradle :app:assembleDebug
+
+      - name: Enviar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: R51ME-Remote-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
